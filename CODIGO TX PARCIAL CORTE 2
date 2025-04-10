@@ -1,0 +1,68 @@
+# TXXXXX - CÓDIGO TRANSMISOR NRF24L01 + Raspberry Pi Pico W
+# Este script se ejecuta en una Raspberry Pi Pico W.
+# Mide el valor de RSSI de la red WiFi a la que está conectada y lo transmite mediante el módulo NRF24L01.
+
+from machine import Pin, SPI         # Importa clases para manejar pines y el bus SPI
+from nrf24l01 import NRF24L01       # Librería para controlar el módulo NRF24L01
+import network                      # Módulo para conectividad WiFi
+import struct                       # Para empaquetar el dato como byte
+import utime                        # Módulo de tiempo
+
+# --- Configuración de pines SPI y control del NRF24L01 ---
+csn = Pin(15, mode=Pin.OUT, value=1)  
+ce = Pin(14, mode=Pin.OUT, value=0)   
+spi = SPI(0, sck=Pin(18), mosi=Pin(19), miso=Pin(16))  # Configura SPI0 con pines estándar que acepte la raspberry
+
+# --- Configuración de red WiFi ---
+wifi = network.WLAN(network.STA_IF)  # Permite la conectividad desde la Raspberry Pi Pico W a Wifi
+wifi.active(True)
+
+SSID = "OPPOReno6Lite"   # Nombre de la red a la cual se va a conectar el microcontrolador
+PASSWORD = "12345678"    #Contraseña de la red a la cual se va a conectar el microcontrolador
+wifi.connect(SSID, PASSWORD)
+
+# Esperar conexión WiFi (máximo 10 segundos)
+for _ in range(20):
+    if wifi.isconnected():
+        break
+    utime.sleep(0.5)
+
+# --- Configuración del NRF24L01 ---
+# Se definen dos direcciones (pipes) para TX y RX
+pipes = (b"\xe1\xf0\xf0\xf0\xf0", b"\xd2\xf0\xf0\xf0\xf0")
+
+# Inicializa el NRF24L01 con el canal 75 (2.475 GHz) y payload de 1 byte
+nrf = NRF24L01(spi, csn, ce, channel=75, payload_size=1)
+
+# Configura velocidad de transmisión y potencia de salida:
+nrf.reg_write(0x06, 0b00100000)  # Velocidad: 250 kbps, Potencia: 0 dBm
+# Para cambiar la velocidad, se debe descomentar una de las siguientes líneas:
+# nrf.reg_write(0x06, 0b00000110)  # Velocidad: 1 Mbps, Potencia: 0 dBm
+# nrf.reg_write(0x06, 0b00100110)  # Velocidad: 2 Mbps, Potencia: 0 dBm
+
+# Configuración de retransmisiones automáticas:
+# 15 intentos, con 250 µs entre intentos (valor máximo)
+nrf.reg_write(0x04, 0b11110000)
+
+# Abre el- pipe de transmisión y recepción
+nrf.open_tx_pipe(pipes[0])        # Dirección destino (receptor)
+nrf.open_rx_pipe(1, pipes[1])     # Dirección propia 
+
+# --- Bucle principal: transmite el RSSI periódicamente ---
+while True:
+    if wifi.isconnected():
+        rssi = wifi.status('rssi')  # Obtiene el valor de la señal WiFi en dBm
+        if rssi is not None:
+            try:
+                nrf.stop_listening()  # Cambia a modo transmisión
+                print("Enviando RSSI:", rssi, "dBm")
+                
+                # Empaqueta el valor RSSI como un solo byte con signo
+                nrf.send(struct.pack("b", rssi))
+            except OSError:
+                print("Fallo al transmitir")
+    else:
+        print("WiFi desconectado, intentando reconectar...")
+        wifi.connect(SSID, PASSWORD)
+    
+    utime.sleep(0.5)  # Espera medio segundo antes de repetir

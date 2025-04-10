@@ -1,0 +1,50 @@
+# RXXXXXXXX - CÓDIGO RECEPTOR NRF24L01 + Raspberry Pi Pico W
+# Este script se ejecuta en la Raspberry Pi Pico W que actúa como receptor RX.
+# Recibe valores RSSI transmitidos desde el RX por medio del NRF24L01 y los muestra en una pantalla OLED.
+
+from machine import Pin, SPI, I2C      # Importa clases para pines, SPI e I2C
+import struct                          # Para desempaquetar datos recibidos
+import utime                           # Módulo de tiempo
+from nrf24l01 import NRF24L01          # Librería para el módulo NRF24L01
+from ssd1306 import SSD1306_I2C        # Librería para manejar pantalla OLED I2C
+
+# --- Configuración de pines SPI para el módulo NRF24L01 ---
+csn = Pin(15, mode=Pin.OUT, value=1)    
+ce = Pin(14, mode=Pin.OUT, value=0)  
+spi = SPI(0, sck=Pin(18), mosi=Pin(19), miso=Pin(16))  
+
+# --- Configuración de pines I2C para pantalla OLED ---
+i2c = I2C(0, scl=Pin(9), sda=Pin(8), freq=400000)  # I2C0 con frecuencia de 400 kHz
+oled = SSD1306_I2C(128, 64, i2c)  # Pantalla OLED de 128x64 pixeles
+
+# --- Configuración del módulo NRF24L01 ---
+pipes = (b"\xe1\xf0\xf0\xf0\xf0", b"\xd2\xf0\xf0\xf0\xf0")  # Direcciones RX/TX (pipes)
+nrf = NRF24L01(spi, csn, ce, channel=75, payload_size=1)    # Canal 75 (2.475 GHz), 1 byte de carga útil
+
+# Abrir canal de transmisión y recepción (aunque este script solo recibe)
+nrf.open_tx_pipe(pipes[1])  # Dirección del transmisor
+nrf.open_rx_pipe(1, pipes[0])  # Dirección propia
+
+# Configuración de velocidad y potencia: 2 Mbps, 0 dBm
+nrf.reg_write(0x06, 0b00100010)
+
+# Configurar retransmisión automática: 5 intentos, intervalo de 250 µs
+nrf.reg_write(0x04, 0b01010000)
+
+# Comenzar a escuchar transmisiones entrantes
+nrf.start_listening()
+
+# --- Bucle principal: recibir datos y mostrar en pantalla ---
+while True:
+    if nrf.any():  # Si hay datos recibidos en el buffer
+        buf = nrf.recv()  # Leer el buffer (1 byte)
+        rssi = struct.unpack("b", buf)[0]  # Convertir byte a entero con signo
+        print("RSSI recibido:", rssi, "dBm")  # Mostrar en consola
+
+        # Mostrar el valor en la pantalla OLED
+        oled.fill(0)  # Limpiar pantalla
+        oled.text("RSSI recibido:", 0, 10)
+        oled.text(str(rssi) + " dBm", 0, 30)
+        oled.show()
+    
+    utime.sleep(0.5)  # Esperar medio segundo antes de volver a verificar
